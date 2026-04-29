@@ -300,8 +300,7 @@ def run_pipeline(
         status.steps_completed.append("Research run persisted to Vault")
         status.current_step = "Done"
 
-    # Self-Healing Penalty
-: If still low confidence, penalize these sources
+    # Self-Healing Penalty: If still low confidence, penalize these sources
     if conf < 0.5:
         print("   ⚠️ Final confidence still low. Penalizing sources for poor signal.")
         for item in ctx.critiqued:
