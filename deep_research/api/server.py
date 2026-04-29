@@ -24,8 +24,8 @@ async def lifespan(app: FastAPI):
     if cfg.database_url:
         from ..vault.db import init_db
         init_db(cfg.database_url)
-    _graph = ReputationGraph(config=cfg, warn_cb=_api_warn_cb)
     _vault = VaultManager(cfg.vault_local_path, cfg.cloud_sync_url, cfg.vault_auto_sync)
+    _graph = ReputationGraph(vault=_vault, config=cfg, warn_cb=_api_warn_cb)
     yield
 
 
@@ -77,10 +77,9 @@ def run_research(req: ResearchRequest):
         model=req.model,
         custom_urls=req.custom_urls,
         graph=_graph,
+        vault=_vault,
         config=cfg,
     )
-    if req.save and _vault:
-        _vault.save(ctx)
     return ResearchResponse(
         run_id=ctx.run_id,
         query=ctx.query,
