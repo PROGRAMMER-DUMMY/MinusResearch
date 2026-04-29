@@ -4,7 +4,7 @@ Typer CLI — research, vault, sources, graph commands.
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Annotated
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
@@ -24,13 +24,13 @@ def _bootstrap(database_url: str):
 
 @app.command()
 def research(
-    query: str = typer.Argument(..., help="Research query"),
-    provider: str = typer.Option(None, "--provider", "-p", help="claude | openai | gemini"),
-    model: str    = typer.Option(None, "--model", "-m", help="Override model name"),
-    custom: List[str] = typer.Option([], "--custom", "-c", help="Custom source URLs (repeat flag)"),
-    output: Path  = typer.Option(None, "--output", "-o", help="Save report to file"),
-    no_save: bool = typer.Option(False, "--no-save", help="Don't persist to vault"),
-    db: str       = typer.Option("", "--db", envvar="DATABASE_URL", help="PostgreSQL URL"),
+    query: Annotated[str, typer.Argument(help="Research query")],
+    provider: Annotated[Optional[str], typer.Option("--provider", "-p", help="claude | openai | gemini")] = None,
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Override model name")] = None,
+    custom: Annotated[List[str], typer.Option("--custom", "-c", help="Custom source URLs (repeat flag)")] = [],
+    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save report to file")] = None,
+    no_save: Annotated[bool, typer.Option("--no-save", help="Don't persist to vault")] = False,
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL", help="PostgreSQL URL")] = "",
 ):
     """Run the full 5-agent research pipeline on a query."""
     from ..core.config import cfg
@@ -110,8 +110,8 @@ def _print_source_table(critiqued: list[dict]):
 
 @app.command()
 def vault_list(
-    limit: int = typer.Option(20, "--limit", "-n"),
-    db: str    = typer.Option("", "--db", envvar="DATABASE_URL"),
+    limit: Annotated[int, typer.Option("--limit", "-n")] = 20,
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL")] = "",
 ):
     """List recent research runs in the vault."""
     from ..core.config import cfg
@@ -135,8 +135,8 @@ def vault_list(
 
 @app.command()
 def vault_show(
-    run_id: str = typer.Argument(...),
-    db: str     = typer.Option("", "--db", envvar="DATABASE_URL"),
+    run_id: Annotated[str, typer.Argument()],
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL")] = "",
 ):
     """Show a saved research report from the vault."""
     from ..core.config import cfg
@@ -155,9 +155,9 @@ def vault_show(
 
 @app.command()
 def source_add(
-    url: str   = typer.Argument(..., help="URL to register as custom source"),
-    score: float = typer.Option(60.0, "--score", "-s"),
-    db: str    = typer.Option("", "--db", envvar="DATABASE_URL"),
+    url: Annotated[str, typer.Argument(help="URL to register as custom source")],
+    score: Annotated[float, typer.Option("--score", "-s")] = 60.0,
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL")] = "",
 ):
     """Register a custom trusted source."""
     from ..core.config import cfg
@@ -171,9 +171,9 @@ def source_add(
 
 @app.command()
 def source_blacklist(
-    url: str   = typer.Argument(...),
-    reason: str = typer.Option("Manual blacklist", "--reason", "-r"),
-    db: str    = typer.Option("", "--db", envvar="DATABASE_URL"),
+    url: Annotated[str, typer.Argument()],
+    reason: Annotated[str, typer.Option("--reason", "-r")] = "Manual blacklist",
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL")] = "",
 ):
     """Manually blacklist a source."""
     from ..core.config import cfg
@@ -189,8 +189,8 @@ def source_blacklist(
 
 @app.command()
 def graph_scores(
-    limit: int = typer.Option(30, "--limit", "-n"),
-    db: str    = typer.Option("", "--db", envvar="DATABASE_URL"),
+    limit: Annotated[int, typer.Option("--limit", "-n")] = 30,
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL")] = "",
 ):
     """Show current reputation scores for all sources."""
     from ..core.config import cfg
@@ -216,9 +216,9 @@ def graph_scores(
 
 @app.command()
 def chat(
-    provider: str = typer.Option(None, "--provider", "-p", help="claude | openai | gemini"),
-    model: str    = typer.Option(None, "--model", "-m", help="Override model name"),
-    db: str       = typer.Option("", "--db", envvar="DATABASE_URL", help="PostgreSQL URL"),
+    provider: Annotated[Optional[str], typer.Option("--provider", "-p", help="claude | openai | gemini")] = None,
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Override model name")] = None,
+    db: Annotated[str, typer.Option("--db", envvar="DATABASE_URL", help="PostgreSQL URL")] = "",
 ):
     """Start an interactive research session (Claude-style)."""
     from prompt_toolkit import PromptSession
