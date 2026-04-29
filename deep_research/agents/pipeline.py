@@ -48,35 +48,39 @@ class ResearchContext:
 class LiveStatus:
     def __init__(self, query: str):
         self.query = query
-        self.current_step = "Initializing..."
+        self.current_step = "Initializing"
         self.steps_completed = []
-        self.active_agent = None
+        self.active_agent = "Orchestrator"
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
+            BarColumn(bar_width=20),
             TaskProgressColumn(),
         )
         self.crawl_task = None
 
     def __rich__(self) -> Group:
-        # Step list
-        history = ""
+        # 1. Query Panel (Gemini Style)
+        header = Panel(
+            f"[bold white]Query:[/] [dim]{self.query}[/]",
+            border_style="bright_black",
+            padding=(0, 1)
+        )
+
+        # 2. History & Activity (Agentic Style)
+        lines = []
         for s in self.steps_completed:
-            history += f" [green]✔[/][dim] {s}[/]\n"
+            lines.append(f" [green]●[/] [white]{s}[/]")
         
-        # Current status
-        status = f" [bold cyan]{self.current_step}...[/]"
-        if self.active_agent:
-            status += f" [dim]({self.active_agent})[/]"
+        # Current active step with "branch" connector
+        agent_chip = f"[black on cyan] {self.active_agent} [/]"
+        lines.append(f" [cyan]○[/] {agent_chip} [bold white]{self.current_step}[/] [dim]...[/]")
         
-        # Layout
-        renderables = [
-            Panel(f"[bold cyan]Researching:[/][white] {self.query}[/]", border_style="cyan"),
-            history + status
-        ]
+        # 3. Progress (if crawling)
+        renderables = [header, "\n".join(lines)]
         
         if self.crawl_task is not None:
+            renderables.append("\n" + "   ⎿  ")
             renderables.append(self.progress)
             
         return Group(*renderables)
