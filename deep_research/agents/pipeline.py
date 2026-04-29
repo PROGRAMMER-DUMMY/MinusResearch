@@ -7,6 +7,11 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
+from rich.live import Live
+from rich.panel import Panel
+from rich.spinner import Spinner
+from rich.console import Group
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from ..core import llm
 from ..core.config import cfg
@@ -36,6 +41,45 @@ class ResearchContext:
     provider: str = "claude"
     model: str = ""
     confidence_score: float = 0.0
+
+
+# ── Live UI Helper ────────────────────────────────────────────────────────────
+
+class LiveStatus:
+    def __init__(self, query: str):
+        self.query = query
+        self.current_step = "Initializing..."
+        self.steps_completed = []
+        self.active_agent = None
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+        )
+        self.crawl_task = None
+
+    def __rich__(self) -> Group:
+        # Step list
+        history = ""
+        for s in self.steps_completed:
+            history += f" [green]✔[/][dim] {s}[/]\n"
+        
+        # Current status
+        status = f" [bold cyan]{self.current_step}...[/]"
+        if self.active_agent:
+            status += f" [dim]({self.active_agent})[/]"
+        
+        # Layout
+        renderables = [
+            Panel(f"[bold cyan]Researching:[/][white] {self.query}[/]", border_style="cyan"),
+            history + status
+        ]
+        
+        if self.crawl_task is not None:
+            renderables.append(self.progress)
+            
+        return Group(*renderables)
 
 
 # ── Agent 1: Planner ──────────────────────────────────────────────────────────
@@ -173,68 +217,91 @@ def run_pipeline(
     crawler = GuidedCrawler(config=c, provider=p, model=m)
     extractor = ExtractorAgent(provider=p, model=m)
 
-    print(f"\n🧠 [Orchestrator] Planning sub-queries...")
-    ctx.sub_questions = planner_agent(query, p, m, c)
-    
-    # ATTEMPT 1: Fast GraphRAG Retrieval (The Vault)
-    print(f"\n⚡ [Attempt 1] Retrieving from Vault (Hybrid GraphRAG)...")
-    vault_results = retriever.retrieve(query, top_k=10)
-    
-    if vault_results:
-        ctx.compressed = vault_results
+    status = LiveStatus(query)
+    with Live(status, refresh_per_second=10) as live:
+        status.current_step = "Planning sub-queries"
+        status.active_agent = "PlannerAgent"
+        ctx.sub_questions = planner_agent(query, p, m, c)
+        status.steps_completed.append("Research plan generated")
+
+        # ATTEMPT 1: Fast GraphRAG Retrieval (The Vault)
+        status.current_step = "Retrieving from Vault (Hybrid GraphRAG)"
+        status.active_agent = "RetrieverAgent"
+        vault_results = retriever.retrieve(query, top_k=10)
+
+        if vault_results:
+            ctx.compressed = vault_results
+            status.current_step = "Evaluating source credibility"
+            status.active_agent = "CriticAgent"
+            ctx.critiqued = critic_agent(ctx.compressed, graph, run_id, p, m, c)
+
+            status.current_step = "Synthesizing vault findings"
+            status.active_agent = "WriterAgent"
+            conf, r_md, bul, qa = writer_agent(query, ctx.sub_questions, ctx.critiqued, p, m, c)
+            ctx.confidence_score = conf
+
+            if conf > 0.85:
+                status.steps_completed.append(f"Vault retrieval sufficient (Confidence: {conf:.2f})")
+                ctx.report_md, ctx.bullets, ctx.qa_data = r_md, bul, qa
+                status.current_step = "Finalizing report"
+                return ctx
+
+        # ATTEMPT 2: Fallback to Web Search + Deep Crawl (Firecrawl)
+        status.steps_completed.append(f"Vault coverage low. Falling back to web search.")
+        status.current_step = "Searching the web"
+        status.active_agent = "SearchAdapter"
+        raw_results = []
+        for sq in ctx.sub_questions:
+            raw_results.extend(search_all(sq, custom_urls, config=c))
+
+        # Semantic Routing: pick best links
+        links = [r.url for r in raw_results if not graph.is_blacklisted(r.url)]
+        chosen_links = crawler.semantic_route(query, list(set(links)))
+
+        status.steps_completed.append(f"Discovered {len(links)} sources, routing {len(chosen_links)} high-signal links")
+        status.current_step = "Crawling & distilling content"
+        status.active_agent = "Firecrawl + Extractor"
+        status.crawl_task = status.progress.add_task("Crawling...", total=len(chosen_links))
+
+        for url in chosen_links:
+            raw_md = crawler.crawl(url)
+            if raw_md:
+                fact = extractor.distill(url, raw_md, query)
+                ctx.extracted_facts.append(fact)
+                ctx.compressed.append({"url": url, "summary": fact.summary, "title": url})
+            status.progress.advance(status.crawl_task)
+
+        # Final Evaluation & Writing
+        status.steps_completed.append("Deep crawl completed")
+        status.current_step = "Evaluating newly crawled sources"
+        status.active_agent = "CriticAgent"
         ctx.critiqued = critic_agent(ctx.compressed, graph, run_id, p, m, c)
+
+        status.current_step = "Generating final report"
+        status.active_agent = "WriterAgent"
         conf, r_md, bul, qa = writer_agent(query, ctx.sub_questions, ctx.critiqued, p, m, c)
         ctx.confidence_score = conf
-        print(f"   Vault Confidence: {conf:.2f}")
-        
-        if conf > 0.85:
-            print("   ✅ Vault context sufficient. Skipping web search.")
-            ctx.report_md, ctx.bullets, ctx.qa_data = r_md, bul, qa
-            return ctx
+        ctx.report_md, ctx.bullets, ctx.qa_data = r_md, bul, qa
 
-    # ATTEMPT 2: Fallback to Web Search + Deep Crawl (Firecrawl)
-    print(f"\n🌐 [Attempt 2] Confidence low. Falling back to Deep Web Search...")
-    raw_results = []
-    for sq in ctx.sub_questions:
-        raw_results.extend(search_all(sq, custom_urls, config=c))
-    
-    # Semantic Routing: pick best links
-    links = [r.url for r in raw_results if not graph.is_blacklisted(r.url)]
-    chosen_links = crawler.semantic_route(query, list(set(links)))
-    
-    print(f"   Crawling {len(chosen_links)} routed links via Firecrawl...")
-    for url in chosen_links:
-        raw_md = crawler.crawl(url)
-        if raw_md:
-            fact = extractor.distill(url, raw_md, query)
-            ctx.extracted_facts.append(fact)
-            ctx.compressed.append({"url": url, "summary": fact.summary, "title": url})
-            
-    # Final Evaluation & Writing
-    print(f"\n🔬 [Critic] Evaluating newly crawled sources...")
-    ctx.critiqued = critic_agent(ctx.compressed, graph, run_id, p, m, c)
-    
-    print(f"\n✍️  [Writer] Generating final report...")
-    conf, r_md, bul, qa = writer_agent(query, ctx.sub_questions, ctx.critiqued, p, m, c)
-    ctx.confidence_score = conf
-    ctx.report_md, ctx.bullets, ctx.qa_data = r_md, bul, qa
-    
-    # Atomic Batch Save
-    print(f"\n💾 [Vault] Saving atomic batch result...")
-    batch_result = BatchResearchResult(
-        run_id=run_id,
-        query=query,
-        provider=p,
-        model=m,
-        report_md=ctx.report_md,
-        bullets=ctx.bullets,
-        qa_data=ctx.qa_data,
-        extracted_facts=ctx.extracted_facts,
-        reputation_updates=graph.pending_updates
-    )
-    vault.save_run(batch_result)
+        # Atomic Batch Save
+        status.current_step = "Saving atomic batch result"
+        batch_result = BatchResearchResult(
+            run_id=run_id,
+            query=query,
+            provider=p,
+            model=m,
+            report_md=ctx.report_md,
+            bullets=ctx.bullets,
+            qa_data=ctx.qa_data,
+            extracted_facts=ctx.extracted_facts,
+            reputation_updates=graph.pending_updates
+        )
+        vault.save_run(batch_result)
+        status.steps_completed.append("Research run persisted to Vault")
+        status.current_step = "Done"
 
-    # Self-Healing Penalty: If still low confidence, penalize these sources
+    # Self-Healing Penalty
+: If still low confidence, penalize these sources
     if conf < 0.5:
         print("   ⚠️ Final confidence still low. Penalizing sources for poor signal.")
         for item in ctx.critiqued:
