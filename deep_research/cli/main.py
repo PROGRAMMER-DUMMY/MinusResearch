@@ -214,6 +214,79 @@ def graph_scores(
     console.print(table)
 
 
+@app.command()
+def chat(
+    provider: str = typer.Option(None, "--provider", "-p", help="claude | openai | gemini"),
+    model: str    = typer.Option(None, "--model", "-m", help="Override model name"),
+    db: str       = typer.Option("", "--db", envvar="DATABASE_URL", help="PostgreSQL URL"),
+):
+    """Start an interactive research session (Claude-style)."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.styles import Style
+    from ..core.config import cfg
+    from ..agents.pipeline import run_pipeline
+    from ..graph.reputation import ReputationGraph
+    from ..vault.manager import VaultManager
+
+    c = cfg.override(
+        default_provider=provider or cfg.default_provider,
+        database_url=db or cfg.database_url,
+    )
+    _bootstrap(c.database_url)
+
+    vault = VaultManager(c.vault_local_path, c.cloud_sync_url, c.vault_auto_sync)
+    graph = ReputationGraph(vault=vault, config=c)
+
+    style = Style.from_dict({
+        "prompt": "bold cyan",
+    })
+    session = PromptSession(style=style)
+
+    console.print(Panel("[bold cyan]Deep Research Interactive Shell[/]\n[dim]Type 'exit' or 'quit' to end session.[/dim]", expand=False))
+
+    while True:
+        try:
+            query = session.prompt("deep-research > ")
+            if not query.strip():
+                continue
+            if query.lower() in ("exit", "quit"):
+                break
+
+            ctx = run_pipeline(
+                query=query,
+                provider=provider,
+                model=model or None,
+                graph=graph,
+                vault=vault,
+                config=c,
+            )
+
+            console.print("\n" + "─" * 60)
+            console.print(Markdown(ctx.report_md))
+            console.print("\n" + "─" * 60)
+
+        except KeyboardInterrupt:
+            continue
+        except EOFError:
+            break
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+    console.print("[yellow]Goodbye![/yellow]")
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(ctx: typer.Context):
+    """Default to chat mode if no command is provided."""
+    if ctx.invoked_subcommand is None:
+        # Check if we are in a TTY before defaulting to chat
+        import sys
+        if sys.stdin.isatty():
+            chat()
+        else:
+            console.print(ctx.get_help())
+
+
 def main():
     app()
 
