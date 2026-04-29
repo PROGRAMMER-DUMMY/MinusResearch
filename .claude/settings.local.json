@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p deep_research)",
+      "Bash(mv agents *)",
+      "Bash(.venv/Scripts/python -m ensurepip --upgrade)",
+      "Bash(.venv/Scripts/python *)",
+      "Bash(where claude *)",
+      "Bash(where gemini *)",
+      "Bash(where codex *)",
+      "Bash(gemini --help)"
+    ]
+  }
+}
