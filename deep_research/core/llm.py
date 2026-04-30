@@ -97,14 +97,19 @@ def _openai(prompt, system, model, max_tokens, temperature, c) -> str:
 
 
 def _gemini(prompt, system, model, max_tokens, temperature, c) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=c.gemini_api_key)
-    m = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=system,
-        generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
+    from genai import Client
+    from genai.types import GenerateContentConfig
+    
+    client = Client(api_key=c.gemini_api_key)
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        ),
     )
-    resp = m.generate_content(prompt)
     return resp.text
 
 
