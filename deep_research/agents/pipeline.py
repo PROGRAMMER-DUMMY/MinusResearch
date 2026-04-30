@@ -258,26 +258,40 @@ def run_pipeline(
         for sq in ctx.sub_questions:
             raw_results.extend(search_all(sq, custom_urls, config=c))
 
+        if not raw_results:
+            status.steps_completed.append(" [red]![/] All search providers failed (check API keys).")
+            status.current_step = "Generating fallback report"
+            status.active_agent = "WriterAgent"
+            conf, r_md, bul, qa = writer_agent(query, ctx.sub_questions, [], p, m, c)
+            ctx.report_md, ctx.bullets, ctx.qa_data = r_md, bul, qa
+            return ctx
+
         # Semantic Routing: pick best links
         links = [r.url for r in raw_results if not graph.is_blacklisted(r.url)]
         chosen_links = crawler.semantic_route(query, list(set(links)))
 
         status.steps_completed.append(f"Discovered {len(links)} sources, routing {len(chosen_links)} high-signal links")
-        status.current_step = "Crawling & distilling content"
-        status.active_agent = "Firecrawl + Extractor"
-        status.crawl_task = status.progress.add_task("Crawling...", total=len(chosen_links))
 
-        for url in chosen_links:
-            raw_md = crawler.crawl(url)
-            if raw_md:
-                fact = extractor.distill(url, raw_md, query)
-                ctx.extracted_facts.append(fact)
-                ctx.compressed.append({"url": url, "summary": fact.summary, "title": url})
-            status.progress.advance(status.crawl_task)
+        if chosen_links:
+            status.current_step = "Crawling & distilling content"
+            status.active_agent = "Firecrawl + Extractor"
+            status.crawl_task = status.progress.add_task("Crawling...", total=len(chosen_links))
+
+            for url in chosen_links:
+                raw_md = crawler.crawl(url)
+                if raw_md:
+                    fact = extractor.distill(url, raw_md, query)
+                    ctx.extracted_facts.append(fact)
+                    ctx.compressed.append({"url": url, "summary": fact.summary, "title": url})
+                status.progress.advance(status.crawl_task)
+
+            status.steps_completed.append("Deep crawl completed")
+            status.crawl_task = None # Hide progress bar
+        else:
+            status.steps_completed.append("No high-signal links selected for crawl.")
 
         # Final Evaluation & Writing
-        status.steps_completed.append("Deep crawl completed")
-        status.current_step = "Evaluating newly crawled sources"
+
         status.active_agent = "CriticAgent"
         ctx.critiqued = critic_agent(ctx.compressed, graph, run_id, p, m, c)
 
